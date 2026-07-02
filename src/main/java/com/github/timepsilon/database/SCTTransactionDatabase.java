@@ -61,6 +61,16 @@ public class SCTTransactionDatabase {
         return dao.sumAmountForItemSince(item.toString(), hours);
     }
 
+    /**
+     * Quantity sold per item over the last {@code hours} hours, keyed by item id (as produced by
+     * {@code Item.toString()}) and ordered by amount descending. Empty when SQL stats are disabled.
+     * Call from the server thread.
+     */
+    public Map<String, Integer> getAmountsSoldByItem(int hours) {
+        if (!SqlStatsGate.isEnabled()) return Map.of();
+        return dao.sumAmountByItemSince(hours);
+    }
+
     public static SCTTransactionDatabase getDatabase() {
         return DATABASE;
     }

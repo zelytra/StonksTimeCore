@@ -18,7 +18,9 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class SctTransactionDao {
 
@@ -51,6 +53,14 @@ public class SctTransactionDao {
             SELECT COALESCE(SUM(amount), 0) AS total
             FROM sct_transaction
             WHERE item = ? AND time >= ?
+            """;
+
+    private static final String SUM_AMOUNT_BY_ITEM_SINCE = """
+            SELECT item, COALESCE(SUM(amount), 0) AS total
+            FROM sct_transaction
+            WHERE time >= ?
+            GROUP BY item
+            ORDER BY total DESC
             """;
 
     private final PendingWriteQueue<SctTransactionEntry> pending = PendingWritesStore.get().sctTransactions();
@@ -112,6 +122,36 @@ public class SctTransactionDao {
                 disconnect();
             }
             return 0;
+        }
+    }
+
+    /**
+     * Returns the total {@code amount} sold per item over the last {@code hours} hours, keyed by the
+     * stored item id (as produced by {@code Item.toString()}), ordered by amount descending.
+     * <p>
+     * Timestamps are stored as hourly buckets, so the window is hour-granular. Returns an empty map
+     * when there is no connection, {@code hours <= 0}, or on error. Call from the server thread.
+     */
+    public Map<String, Integer> sumAmountByItemSince(int hours) {
+        if (hours <= 0) return Map.of();
+        ensureConnected();
+        if (connection == null) return Map.of();
+        Instant since = TimeCore.getCurrentInstant().minus(Duration.ofHours(hours));
+        Map<String, Integer> totals = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(SUM_AMOUNT_BY_ITEM_SINCE)) {
+            statement.setString(1, SqliteHelper.toIso(since));
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    totals.put(resultSet.getString("item"), resultSet.getInt("total"));
+                }
+            }
+            return totals;
+        } catch (SQLException e) {
+            LOGGER.error("Failed to sum SCT amounts by item", e);
+            if (SqliteHelper.isConnectionError(e)) {
+                disconnect();
+            }
+            return Map.of();
         }
     }
 
